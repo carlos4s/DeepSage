@@ -8,26 +8,21 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import List
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
 from . import llm
+from .agents import (
+    Reflection,
+    SearchPlan,
+    plan_searches,
+    reflect_on_findings,
+    write_report,
+)
 from .search import Page, SearchResult, fetch_many, search
 
 load_dotenv(override=False)
-
-
-class SearchPlan(BaseModel):
-    queries: List[str] = Field(min_length=1, max_length=6)
-
-
-class Reflection(BaseModel):
-    enough: bool = Field(description="True if findings already answer the question.")
-    missing: str = Field(default="", description="What's still missing, if anything.")
-    next_queries: List[str] = Field(default_factory=list, max_length=4)
 
 
 @dataclass
@@ -70,7 +65,9 @@ class DeepResearcher:
         seen_urls: set[str] = set()
         seen_queries: set[str] = set()
 
-        queries = await self._plan(query)
+        plan: SearchPlan = await plan_searches(query, model=self.planner_model)
+        self._log(f"Plan: {plan.queries}")
+        queries = plan.queries
         iteration = 0
 
         while iteration < self.max_iterations and queries:
@@ -90,7 +87,9 @@ class DeepResearcher:
             if iteration >= self.max_iterations:
                 break
 
-            reflection = await self._reflect(query, sources)
+            reflection: Reflection = await reflect_on_findings(
+                query, _format_sources_brief(sources), model=self.reflect_model
+            )
             if reflection.enough:
                 self._log("Reflection: sufficient findings.")
                 break
@@ -99,34 +98,19 @@ class DeepResearcher:
                 break
             self._log(f"Reflection: still missing → {reflection.missing}")
 
-        markdown = await self._write(query, sources)
+        if not sources:
+            markdown = f"# {query}\n\n_No sources could be retrieved._"
+        else:
+            markdown = await write_report(
+                query, _format_sources_full(sources), model=self.writer_model
+            )
         return ResearchReport(
-            query=query,
-            markdown=markdown,
-            sources=sources,
-            iterations=iteration,
+            query=query, markdown=markdown, sources=sources, iterations=iteration
         )
-
-    # --- pipeline steps -------------------------------------------------
-
-    async def _plan(self, query: str) -> List[str]:
-        system = (
-            "You are a research planner. Given a question, output a JSON object "
-            "with a `queries` array of 3-5 specific web-search queries that, taken "
-            "together, would let a researcher answer the question. Cover different "
-            "angles; do not repeat phrasing. Return JSON only."
-        )
-        today = datetime.now().strftime("%Y-%m-%d")
-        user = f"Today's date: {today}\nQuestion: {query}"
-        text = await llm.complete(system, user, model=self.planner_model, max_tokens=512)
-        plan = llm.parse_json(text, SearchPlan)
-        self._log(f"Plan: {plan.queries}")
-        return plan.queries
 
     async def _gather(self, queries: List[str], seen_urls: set[str]) -> List[Source]:
         search_results: List[List[SearchResult]] = await asyncio.gather(
-            *(search(q, self.results_per_search) for q in queries),
-            return_exceptions=False,
+            *(search(q, self.results_per_search) for q in queries)
         )
         urls: List[str] = []
         meta: dict[str, SearchResult] = {}
@@ -135,10 +119,8 @@ class DeepResearcher:
                 if r.url and r.url not in seen_urls and r.url not in meta:
                     meta[r.url] = r
                     urls.append(r.url)
-
         if not urls:
             return []
-
         pages: List[Page] = await fetch_many(urls, self.fetch_char_limit)
         out: List[Source] = []
         for p in pages:
@@ -147,36 +129,6 @@ class DeepResearcher:
             title = p.title or (sr.title if sr else p.url)
             out.append(Source(n=0, title=title, url=p.url, text=p.text))
         return out
-
-    async def _reflect(self, query: str, sources: List[Source]) -> Reflection:
-        system = (
-            "You are a research critic. Given the original question and the "
-            "findings collected so far, decide whether they already answer the "
-            "question. If yes, set `enough` to true. If not, list up to 3 "
-            "concrete follow-up search queries in `next_queries` and describe "
-            "what is `missing`. Return JSON only matching: "
-            '{"enough": bool, "missing": str, "next_queries": [str]}'
-        )
-        digest = _format_sources_brief(sources)
-        user = f"QUESTION: {query}\n\nFINDINGS SO FAR:\n{digest}"
-        text = await llm.complete(system, user, model=self.reflect_model, max_tokens=512)
-        return llm.parse_json(text, Reflection)
-
-    async def _write(self, query: str, sources: List[Source]) -> str:
-        if not sources:
-            return f"# {query}\n\n_No sources could be retrieved._"
-
-        system = (
-            "You are a research writer. Produce a thorough, well-structured "
-            "markdown report that answers the user's question using ONLY the "
-            "numbered findings provided. Cite claims inline as [n] referencing "
-            "the source numbers. End the report with a `## Sources` section "
-            "listing each cited source as `[n] Title — URL`. Be specific, "
-            "neutral, and concise; omit anything the sources do not support."
-        )
-        digest = _format_sources_full(sources)
-        user = f"QUESTION: {query}\n\nNUMBERED SOURCES:\n{digest}"
-        return await llm.complete(system, user, model=self.writer_model, max_tokens=4096)
 
     def _log(self, msg: str) -> None:
         if self.verbose:
