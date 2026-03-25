@@ -6,7 +6,7 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-from .. import llm
+from .base import Agent
 
 
 class SearchPlan(BaseModel):
@@ -21,7 +21,13 @@ SYSTEM = (
 )
 
 
+def init_planner(model: str) -> Agent[SearchPlan]:
+    return Agent(name="planner", system=SYSTEM, model=model, output_type=SearchPlan, max_tokens=512)
+
+
 async def plan_searches(query: str, *, model: str) -> SearchPlan:
+    agent = init_planner(model)
     user = f"Today's date: {datetime.now().strftime('%Y-%m-%d')}\nQuestion: {query}"
-    text = await llm.complete(SYSTEM, user, model=model, max_tokens=512)
-    return llm.parse_json(text, SearchPlan)
+    result = await agent.run(user)
+    assert isinstance(result, SearchPlan)
+    return result

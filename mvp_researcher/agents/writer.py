@@ -1,7 +1,7 @@
 """Writer agent: assemble a cited markdown report from numbered findings."""
 from __future__ import annotations
 
-from .. import llm
+from .base import Agent
 
 
 SYSTEM = (
@@ -14,6 +14,13 @@ SYSTEM = (
 )
 
 
+def init_writer(model: str) -> Agent[None]:
+    return Agent(name="writer", system=SYSTEM, model=model, output_type=None, max_tokens=4096)
+
+
 async def write_report(query: str, sources_digest: str, *, model: str) -> str:
+    agent = init_writer(model)
     user = f"QUESTION: {query}\n\nNUMBERED SOURCES:\n{sources_digest}"
-    return await llm.complete(SYSTEM, user, model=model, max_tokens=4096)
+    result = await agent.run(user)
+    assert isinstance(result, str)
+    return result
