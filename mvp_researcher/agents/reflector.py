@@ -5,6 +5,7 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from ..llm_config import ModelRef
 from .base import Agent
 
 
@@ -24,11 +25,11 @@ SYSTEM = (
 )
 
 
-def init_reflector(model: str) -> Agent[Reflection]:
+def init_reflector(model: ModelRef) -> Agent[Reflection]:
     return Agent(name="reflector", system=SYSTEM, model=model, output_type=Reflection, max_tokens=512)
 
 
-async def reflect_on_findings(query: str, findings_digest: str, *, model: str) -> Reflection:
+async def reflect_on_findings(query: str, findings_digest: str, *, model: ModelRef) -> Reflection:
     agent = init_reflector(model)
     user = f"QUESTION: {query}\n\nFINDINGS SO FAR:\n{findings_digest}"
     result = await agent.run(user)

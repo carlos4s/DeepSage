@@ -20,6 +20,7 @@ from .agents import (
     reflect_on_findings,
     write_report,
 )
+from .llm_config import LLMConfig, default_config
 from .search import Page, SearchResult, fetch_many, search
 
 load_dotenv(override=False)
@@ -49,14 +50,13 @@ class DeepResearcher:
         results_per_search: int | None = None,
         fetch_char_limit: int | None = None,
         verbose: bool = True,
+        config: LLMConfig | None = None,
     ):
         self.max_iterations = max_iterations or llm.env_int("MAX_ITERATIONS", 4)
         self.results_per_search = results_per_search or llm.env_int("RESULTS_PER_SEARCH", 5)
         self.fetch_char_limit = fetch_char_limit or llm.env_int("FETCH_CHAR_LIMIT", 6000)
         self.verbose = verbose
-        self.planner_model = llm.env("PLANNER_MODEL", "claude-sonnet-4-6")
-        self.reflect_model = llm.env("REFLECT_MODEL", "claude-sonnet-4-6")
-        self.writer_model = llm.env("WRITER_MODEL", "claude-sonnet-4-6")
+        self.config = config or default_config()
 
     async def run(self, query: str) -> ResearchReport:
         self._log(f"=== Researching: {query} ===")
@@ -65,7 +65,7 @@ class DeepResearcher:
         seen_urls: set[str] = set()
         seen_queries: set[str] = set()
 
-        plan: SearchPlan = await plan_searches(query, model=self.planner_model)
+        plan: SearchPlan = await plan_searches(query, model=self.config.planner)
         self._log(f"Plan: {plan.queries}")
         queries = plan.queries
         iteration = 0
@@ -88,7 +88,7 @@ class DeepResearcher:
                 break
 
             reflection: Reflection = await reflect_on_findings(
-                query, _format_sources_brief(sources), model=self.reflect_model
+                query, _format_sources_brief(sources), model=self.config.reflector
             )
             if reflection.enough:
                 self._log("Reflection: sufficient findings.")
@@ -102,7 +102,7 @@ class DeepResearcher:
             markdown = f"# {query}\n\n_No sources could be retrieved._"
         else:
             markdown = await write_report(
-                query, _format_sources_full(sources), model=self.writer_model
+                query, _format_sources_full(sources), model=self.config.writer
             )
         return ResearchReport(
             query=query, markdown=markdown, sources=sources, iterations=iteration

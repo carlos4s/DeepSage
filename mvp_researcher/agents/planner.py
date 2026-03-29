@@ -6,6 +6,7 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from ..llm_config import ModelRef
 from .base import Agent
 
 
@@ -21,11 +22,11 @@ SYSTEM = (
 )
 
 
-def init_planner(model: str) -> Agent[SearchPlan]:
+def init_planner(model: ModelRef) -> Agent[SearchPlan]:
     return Agent(name="planner", system=SYSTEM, model=model, output_type=SearchPlan, max_tokens=512)
 
 
-async def plan_searches(query: str, *, model: str) -> SearchPlan:
+async def plan_searches(query: str, *, model: ModelRef) -> SearchPlan:
     agent = init_planner(model)
     user = f"Today's date: {datetime.now().strftime('%Y-%m-%d')}\nQuestion: {query}"
     result = await agent.run(user)

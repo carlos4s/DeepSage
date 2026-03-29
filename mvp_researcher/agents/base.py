@@ -12,6 +12,7 @@ from typing import Generic, Optional, Type, TypeVar
 from pydantic import BaseModel
 
 from .. import llm
+from ..llm_config import ModelRef
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -20,7 +21,7 @@ T = TypeVar("T", bound=BaseModel)
 class Agent(Generic[T]):
     name: str
     system: str
-    model: str
+    model: ModelRef
     output_type: Optional[Type[T]] = None
     max_tokens: int = 2048
     cache_system: bool = True
