@@ -14,12 +14,13 @@ from dotenv import load_dotenv
 
 from . import llm
 from .agents import (
-    Reflection,
+    KnowledgeGapOutput,
     SearchPlan,
+    evaluate_gaps,
     plan_searches,
-    reflect_on_findings,
     write_report,
 )
+from .conversation import Conversation
 from .llm_config import LLMConfig, default_config
 from .search import Page, SearchResult, fetch_many, search
 
@@ -58,12 +59,13 @@ class DeepResearcher:
         self.verbose = verbose
         self.config = config or default_config()
 
-    async def run(self, query: str) -> ResearchReport:
+    async def run(self, query: str, background_context: str = "") -> ResearchReport:
         self._log(f"=== Researching: {query} ===")
 
         sources: List[Source] = []
         seen_urls: set[str] = set()
         seen_queries: set[str] = set()
+        conversation = Conversation()
 
         plan: SearchPlan = await plan_searches(query, model=self.config.planner)
         self._log(f"Plan: {plan.queries}")
@@ -73,30 +75,37 @@ class DeepResearcher:
         while iteration < self.max_iterations and queries:
             iteration += 1
             self._log(f"\n--- Iteration {iteration}: {len(queries)} queries ---")
+            it = conversation.start_iteration()
+            it.queries = list(queries)
+
             new_sources = await self._gather(queries, seen_urls)
             for s in new_sources:
                 s.n = len(sources) + 1
                 sources.append(s)
+            it.findings = [s.text[:600] for s in new_sources]
             self._log(f"Collected {len(new_sources)} new sources (total {len(sources)}).")
             seen_queries.update(queries)
 
             if not sources:
                 self._log("No sources retrieved; stopping.")
                 break
-
             if iteration >= self.max_iterations:
                 break
 
-            reflection: Reflection = await reflect_on_findings(
-                query, _format_sources_brief(sources), model=self.config.reflector
+            gap_eval: KnowledgeGapOutput = await evaluate_gaps(
+                query,
+                conversation.compile(),
+                background_context=background_context,
+                model=self.config.reflector,
             )
-            if reflection.enough:
-                self._log("Reflection: sufficient findings.")
+            if gap_eval.research_complete or not gap_eval.outstanding_gaps:
+                self._log("Knowledge gaps closed.")
                 break
-            queries = [q for q in reflection.next_queries if q and q not in seen_queries]
-            if not queries:
-                break
-            self._log(f"Reflection: still missing → {reflection.missing}")
+
+            next_gap = gap_eval.outstanding_gaps[0]
+            it.gap = next_gap
+            self._log(f"Next gap → {next_gap}")
+            queries = [next_gap] if next_gap not in seen_queries else []
 
         if not sources:
             markdown = f"# {query}\n\n_No sources could be retrieved._"
