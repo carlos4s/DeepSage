@@ -1,8 +1,9 @@
-"""Core iterative deep-research loop.
+"""Research orchestrators.
 
-plan → (search + fetch) → reflect → maybe iterate → write report
-
-Findings accumulate as a numbered source list; the writer cites them as [n].
+* IterativeResearcher: single gap-driven loop (plan → search → reflect → write).
+* DeepResearcher: multi-section workflow that plans an outline and runs an
+  IterativeResearcher concurrently for each section, then stitches the drafts
+  into a single report.
 """
 from __future__ import annotations
 
@@ -15,8 +16,11 @@ from dotenv import load_dotenv
 from . import llm
 from .agents import (
     KnowledgeGapOutput,
+    ReportPlan,
+    ReportPlanSection,
     SearchPlan,
     evaluate_gaps,
+    plan_report,
     plan_searches,
     write_report,
 )
@@ -43,7 +47,14 @@ class ResearchReport:
     iterations: int = 0
 
 
-class DeepResearcher:
+# --------------------------------------------------------------------------- #
+# IterativeResearcher                                                         #
+# --------------------------------------------------------------------------- #
+
+
+class IterativeResearcher:
+    """Single gap-driven research loop for one focused question."""
+
     def __init__(
         self,
         *,
@@ -138,6 +149,74 @@ class DeepResearcher:
             title = p.title or (sr.title if sr else p.url)
             out.append(Source(n=0, title=title, url=p.url, text=p.text))
         return out
+
+    def _log(self, msg: str) -> None:
+        if self.verbose:
+            print(msg, flush=True)
+
+
+# --------------------------------------------------------------------------- #
+# DeepResearcher                                                              #
+# --------------------------------------------------------------------------- #
+
+
+class DeepResearcher:
+    """Plans a multi-section report and runs an IterativeResearcher per section."""
+
+    def __init__(
+        self,
+        *,
+        max_iterations: int | None = None,
+        results_per_search: int | None = None,
+        fetch_char_limit: int | None = None,
+        verbose: bool = True,
+        config: LLMConfig | None = None,
+    ):
+        self.max_iterations = max_iterations
+        self.results_per_search = results_per_search
+        self.fetch_char_limit = fetch_char_limit
+        self.verbose = verbose
+        self.config = config or default_config()
+
+    async def run(self, query: str) -> ResearchReport:
+        self._log(f"=== Building report plan for: {query} ===")
+        plan: ReportPlan = await plan_report(query, model=self.config.planner)
+        self._log(
+            f"Report '{plan.report_title}' — {len(plan.report_outline)} sections."
+        )
+
+        section_reports = await asyncio.gather(
+            *(self._research_section(s, plan.background_context) for s in plan.report_outline)
+        )
+
+        body_parts = [f"# {plan.report_title}", ""]
+        if plan.background_context:
+            body_parts += ["## Background", plan.background_context, ""]
+        for section, draft in zip(plan.report_outline, section_reports):
+            body_parts += [f"## {section.title}", draft.markdown.lstrip("# ").strip(), ""]
+        markdown = "\n".join(body_parts).strip() + "\n"
+
+        all_sources: List[Source] = []
+        for rep in section_reports:
+            all_sources.extend(rep.sources)
+        return ResearchReport(
+            query=query,
+            markdown=markdown,
+            sources=all_sources,
+            iterations=sum(r.iterations for r in section_reports),
+        )
+
+    async def _research_section(
+        self, section: ReportPlanSection, background: str
+    ) -> ResearchReport:
+        researcher = IterativeResearcher(
+            max_iterations=self.max_iterations,
+            results_per_search=self.results_per_search,
+            fetch_char_limit=self.fetch_char_limit,
+            verbose=self.verbose,
+            config=self.config,
+        )
+        return await researcher.run(section.key_question, background_context=background)
 
     def _log(self, msg: str) -> None:
         if self.verbose:
