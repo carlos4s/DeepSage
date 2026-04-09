@@ -19,9 +19,11 @@ from .agents import (
     ReportPlan,
     ReportPlanSection,
     SearchPlan,
+    SectionDraft,
     evaluate_gaps,
     plan_report,
     plan_searches,
+    write_long_report,
     write_report,
 )
 from .conversation import Conversation
@@ -189,12 +191,17 @@ class DeepResearcher:
             *(self._research_section(s, plan.background_context) for s in plan.report_outline)
         )
 
-        body_parts = [f"# {plan.report_title}", ""]
-        if plan.background_context:
-            body_parts += ["## Background", plan.background_context, ""]
-        for section, draft in zip(plan.report_outline, section_reports):
-            body_parts += [f"## {section.title}", draft.markdown.lstrip("# ").strip(), ""]
-        markdown = "\n".join(body_parts).strip() + "\n"
+        self._log("=== Stitching final report ===")
+        drafts = [
+            SectionDraft(title=section.title, markdown=rep.markdown)
+            for section, rep in zip(plan.report_outline, section_reports)
+        ]
+        markdown = await write_long_report(
+            plan.report_title,
+            plan.background_context,
+            drafts,
+            model=self.config.writer,
+        )
 
         all_sources: List[Source] = []
         for rep in section_reports:
