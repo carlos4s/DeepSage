@@ -15,20 +15,24 @@ from dotenv import load_dotenv
 
 from . import llm
 from .agents import (
+    AgentSelectionPlan,
     KnowledgeGapOutput,
     ReportPlan,
     ReportPlanSection,
     SearchPlan,
     SectionDraft,
+    ToolCall,
     evaluate_gaps,
     plan_report,
     plan_searches,
+    select_tools,
     write_long_report,
     write_report,
 )
 from .conversation import Conversation
 from .llm_config import LLMConfig, default_config
 from .search import Page, SearchResult, fetch_many, search
+from .tools import crawl_url
 
 load_dotenv(override=False)
 
@@ -82,22 +86,30 @@ class IterativeResearcher:
 
         plan: SearchPlan = await plan_searches(query, model=self.config.planner)
         self._log(f"Plan: {plan.queries}")
-        queries = plan.queries
+        # First iteration starts from the search plan; subsequent iterations
+        # use the tool selector to pick tools per gap.
+        next_calls: List[ToolCall] = [
+            ToolCall(tool="search", input=q, rationale="initial plan") for q in plan.queries
+        ]
         iteration = 0
 
-        while iteration < self.max_iterations and queries:
+        while iteration < self.max_iterations and next_calls:
             iteration += 1
-            self._log(f"\n--- Iteration {iteration}: {len(queries)} queries ---")
+            self._log(
+                f"\n--- Iteration {iteration}: {len(next_calls)} tool call(s) ---"
+            )
             it = conversation.start_iteration()
-            it.queries = list(queries)
+            it.queries = [f"{tc.tool}:{tc.input}" for tc in next_calls]
 
-            new_sources = await self._gather(queries, seen_urls)
+            new_sources = await self._dispatch(next_calls, seen_urls)
             for s in new_sources:
                 s.n = len(sources) + 1
                 sources.append(s)
             it.findings = [s.text[:600] for s in new_sources]
-            self._log(f"Collected {len(new_sources)} new sources (total {len(sources)}).")
-            seen_queries.update(queries)
+            self._log(
+                f"Collected {len(new_sources)} new sources (total {len(sources)})."
+            )
+            seen_queries.update(tc.input for tc in next_calls)
 
             if not sources:
                 self._log("No sources retrieved; stopping.")
@@ -118,7 +130,12 @@ class IterativeResearcher:
             next_gap = gap_eval.outstanding_gaps[0]
             it.gap = next_gap
             self._log(f"Next gap → {next_gap}")
-            queries = [next_gap] if next_gap not in seen_queries else []
+            selection: AgentSelectionPlan = await select_tools(
+                next_gap, history=conversation.compile(), model=self.config.planner
+            )
+            next_calls = [
+                tc for tc in selection.tasks if tc.input not in seen_queries
+            ]
 
         if not sources:
             markdown = f"# {query}\n\n_No sources could be retrieved._"
@@ -130,27 +147,42 @@ class IterativeResearcher:
             query=query, markdown=markdown, sources=sources, iterations=iteration
         )
 
-    async def _gather(self, queries: List[str], seen_urls: set[str]) -> List[Source]:
-        search_results: List[List[SearchResult]] = await asyncio.gather(
-            *(search(q, self.results_per_search) for q in queries)
-        )
-        urls: List[str] = []
-        meta: dict[str, SearchResult] = {}
-        for results in search_results:
-            for r in results:
-                if r.url and r.url not in seen_urls and r.url not in meta:
-                    meta[r.url] = r
-                    urls.append(r.url)
-        if not urls:
+    async def _dispatch(
+        self, calls: List[ToolCall], seen_urls: set[str]
+    ) -> List[Source]:
+        """Run a mixed batch of search/crawl tool calls concurrently."""
+        async def run(call: ToolCall) -> List[Source]:
+            if call.tool == "search":
+                results = await search(call.input, self.results_per_search)
+                urls = [r.url for r in results if r.url and r.url not in seen_urls]
+                if not urls:
+                    return []
+                pages = await fetch_many(urls, self.fetch_char_limit)
+                meta = {r.url: r for r in results}
+                out: List[Source] = []
+                for p in pages:
+                    if p.url in seen_urls:
+                        continue
+                    seen_urls.add(p.url)
+                    sr = meta.get(p.url)
+                    title = p.title or (sr.title if sr else p.url)
+                    out.append(Source(n=0, title=title, url=p.url, text=p.text))
+                return out
+            if call.tool == "crawl":
+                if call.input in seen_urls:
+                    return []
+                pages = await crawl_url(call.input, char_limit=self.fetch_char_limit)
+                out = []
+                for p in pages:
+                    if p.url in seen_urls:
+                        continue
+                    seen_urls.add(p.url)
+                    out.append(Source(n=0, title=p.title, url=p.url, text=p.text))
+                return out
             return []
-        pages: List[Page] = await fetch_many(urls, self.fetch_char_limit)
-        out: List[Source] = []
-        for p in pages:
-            seen_urls.add(p.url)
-            sr = meta.get(p.url)
-            title = p.title or (sr.title if sr else p.url)
-            out.append(Source(n=0, title=title, url=p.url, text=p.text))
-        return out
+
+        batches = await asyncio.gather(*(run(c) for c in calls))
+        return [s for batch in batches for s in batch]
 
     def _log(self, msg: str) -> None:
         if self.verbose:
