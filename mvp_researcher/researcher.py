@@ -25,6 +25,7 @@ from .agents import (
     evaluate_gaps,
     plan_report,
     plan_searches,
+    proofread,
     select_tools,
     write_long_report,
     write_report,
@@ -205,12 +206,14 @@ class DeepResearcher:
         fetch_char_limit: int | None = None,
         verbose: bool = True,
         config: LLMConfig | None = None,
+        proofread: bool = True,
     ):
         self.max_iterations = max_iterations
         self.results_per_search = results_per_search
         self.fetch_char_limit = fetch_char_limit
         self.verbose = verbose
         self.config = config or default_config()
+        self.do_proofread = proofread
 
     async def run(self, query: str) -> ResearchReport:
         self._log(f"=== Building report plan for: {query} ===")
@@ -234,6 +237,10 @@ class DeepResearcher:
             drafts,
             model=self.config.writer,
         )
+
+        if self.do_proofread:
+            self._log("=== Proofreading ===")
+            markdown = await proofread(markdown, model=self.config.writer)
 
         all_sources: List[Source] = []
         for rep in section_reports:
