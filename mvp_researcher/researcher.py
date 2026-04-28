@@ -34,6 +34,7 @@ from .conversation import Conversation
 from .llm_config import LLMConfig, default_config
 from .search import Page, SearchResult, fetch_many, search
 from .tools import crawl_url
+from .tracing import span
 
 load_dotenv(override=False)
 
@@ -78,14 +79,17 @@ class IterativeResearcher:
         self.config = config or default_config()
 
     async def run(self, query: str, background_context: str = "") -> ResearchReport:
-        self._log(f"=== Researching: {query} ===")
+        with span("iterative.run", verbose=self.verbose, query=query):
+            return await self._run(query, background_context)
 
+    async def _run(self, query: str, background_context: str) -> ResearchReport:
         sources: List[Source] = []
         seen_urls: set[str] = set()
         seen_queries: set[str] = set()
         conversation = Conversation()
 
-        plan: SearchPlan = await plan_searches(query, model=self.config.planner)
+        with span("plan_searches", verbose=self.verbose):
+            plan: SearchPlan = await plan_searches(query, model=self.config.planner)
         self._log(f"Plan: {plan.queries}")
         # First iteration starts from the search plan; subsequent iterations
         # use the tool selector to pick tools per gap.
@@ -102,7 +106,8 @@ class IterativeResearcher:
             it = conversation.start_iteration()
             it.queries = [f"{tc.tool}:{tc.input}" for tc in next_calls]
 
-            new_sources = await self._dispatch(next_calls, seen_urls)
+            with span(f"iter.{iteration}.dispatch", verbose=self.verbose, calls=len(next_calls)):
+                new_sources = await self._dispatch(next_calls, seen_urls)
             for s in new_sources:
                 s.n = len(sources) + 1
                 sources.append(s)
@@ -118,12 +123,13 @@ class IterativeResearcher:
             if iteration >= self.max_iterations:
                 break
 
-            gap_eval: KnowledgeGapOutput = await evaluate_gaps(
-                query,
-                conversation.compile(),
-                background_context=background_context,
-                model=self.config.reflector,
-            )
+            with span(f"iter.{iteration}.evaluate_gaps", verbose=self.verbose):
+                gap_eval: KnowledgeGapOutput = await evaluate_gaps(
+                    query,
+                    conversation.compile(),
+                    background_context=background_context,
+                    model=self.config.reflector,
+                )
             if gap_eval.research_complete or not gap_eval.outstanding_gaps:
                 self._log("Knowledge gaps closed.")
                 break
@@ -131,9 +137,10 @@ class IterativeResearcher:
             next_gap = gap_eval.outstanding_gaps[0]
             it.gap = next_gap
             self._log(f"Next gap → {next_gap}")
-            selection: AgentSelectionPlan = await select_tools(
-                next_gap, history=conversation.compile(), model=self.config.planner
-            )
+            with span(f"iter.{iteration}.select_tools", verbose=self.verbose):
+                selection: AgentSelectionPlan = await select_tools(
+                    next_gap, history=conversation.compile(), model=self.config.planner
+                )
             next_calls = [
                 tc for tc in selection.tasks if tc.input not in seen_queries
             ]
@@ -216,31 +223,39 @@ class DeepResearcher:
         self.do_proofread = proofread
 
     async def run(self, query: str) -> ResearchReport:
-        self._log(f"=== Building report plan for: {query} ===")
-        plan: ReportPlan = await plan_report(query, model=self.config.planner)
+        with span("deep.run", verbose=self.verbose, query=query):
+            return await self._run(query)
+
+    async def _run(self, query: str) -> ResearchReport:
+        with span("plan_report", verbose=self.verbose):
+            plan: ReportPlan = await plan_report(query, model=self.config.planner)
         self._log(
             f"Report '{plan.report_title}' — {len(plan.report_outline)} sections."
         )
 
-        section_reports = await asyncio.gather(
-            *(self._research_section(s, plan.background_context) for s in plan.report_outline)
-        )
+        with span("sections", verbose=self.verbose, count=len(plan.report_outline)):
+            section_reports = await asyncio.gather(
+                *(
+                    self._research_section(s, plan.background_context)
+                    for s in plan.report_outline
+                )
+            )
 
-        self._log("=== Stitching final report ===")
         drafts = [
             SectionDraft(title=section.title, markdown=rep.markdown)
             for section, rep in zip(plan.report_outline, section_reports)
         ]
-        markdown = await write_long_report(
-            plan.report_title,
-            plan.background_context,
-            drafts,
-            model=self.config.writer,
-        )
+        with span("write_long_report", verbose=self.verbose):
+            markdown = await write_long_report(
+                plan.report_title,
+                plan.background_context,
+                drafts,
+                model=self.config.writer,
+            )
 
         if self.do_proofread:
-            self._log("=== Proofreading ===")
-            markdown = await proofread(markdown, model=self.config.writer)
+            with span("proofread", verbose=self.verbose):
+                markdown = await proofread(markdown, model=self.config.writer)
 
         all_sources: List[Source] = []
         for rep in section_reports:
