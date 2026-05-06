@@ -19,8 +19,18 @@ dependencies = [
     "md2pdf>=1.0.1",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
 [project.scripts]
 mvp-research = "mvp_researcher.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["mvp_researcher*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
