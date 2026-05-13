@@ -3,9 +3,9 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mvp-deep-researcher"
-version = "0.1.0"
-description = "Minimum-viable deep research agent using Claude + web search."
+name = "deepsage"
+version = "0.2.0"
+description = "Gap-driven deep research agent: multi-section plans, search + crawl, cited markdown/PDF reports."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
