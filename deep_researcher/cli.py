@@ -10,7 +10,7 @@ from .researcher import DeepResearcher, IterativeResearcher
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="mvp-research",
+        prog="deepsage",
         description="Run a deep-research pass and print a cited markdown report.",
     )
     parser.add_argument("query", nargs="+", help="The research question.")

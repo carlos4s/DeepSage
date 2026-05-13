@@ -20,23 +20,23 @@ cp .env.example .env  # then fill in ANTHROPIC_API_KEY (or OPENAI_API_KEY)
 
 ```bash
 # Multi-section report (default)
-mvp-research "How are small modular reactors being deployed in 2026?"
+deepsage "How are small modular reactors being deployed in 2026?"
 
 # Single focused loop, no section planning
-mvp-research --mode iterative "What's the current state of HALEU fuel supply?"
+deepsage --mode iterative "What's the current state of HALEU fuel supply?"
 
 # Save to disk and render PDF
-mvp-research "Battery chemistries beyond lithium-ion" -o report.md --pdf report.pdf
+deepsage "Battery chemistries beyond lithium-ion" -o report.md --pdf report.pdf
 
 # Skip the proofreader pass (faster, cheaper)
-mvp-research "..." --no-proofread
+deepsage "..." --no-proofread
 ```
 
 Programmatic:
 
 ```python
 import asyncio
-from mvp_researcher import DeepResearcher
+from deep_researcher import DeepResearcher
 
 report = asyncio.run(DeepResearcher().run("your question"))
 print(report.markdown)

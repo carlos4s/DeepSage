@@ -5,7 +5,7 @@ without the overhead of multi-section planning.
 """
 import asyncio
 
-from mvp_researcher import IterativeResearcher
+from deep_researcher import IterativeResearcher
 
 
 async def main() -> None:

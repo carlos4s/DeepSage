@@ -26,10 +26,10 @@ dev = [
 ]
 
 [project.scripts]
-mvp-research = "mvp_researcher.cli:main"
+deepsage = "deep_researcher.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["mvp_researcher*"]
+include = ["deep_researcher*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

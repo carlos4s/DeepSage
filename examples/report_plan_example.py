@@ -5,8 +5,8 @@ outline a deep run would produce before committing to the LLM/search cost.
 """
 import asyncio
 
-from mvp_researcher.agents import plan_report
-from mvp_researcher.llm_config import default_config
+from deep_researcher.agents import plan_report
+from deep_researcher.llm_config import default_config
 
 
 async def main() -> None:

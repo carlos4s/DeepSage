@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mvp_researcher.conversation import Conversation
+from deep_researcher.conversation import Conversation
 
 
 def test_iteration_round_trip():

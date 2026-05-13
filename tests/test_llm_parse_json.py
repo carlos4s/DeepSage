@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from mvp_researcher.llm import parse_json
+from deep_researcher.llm import parse_json
 
 
 class Shape(BaseModel):

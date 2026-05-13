@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mvp_researcher.llm_config import default_config
+from deep_researcher.llm_config import default_config
 
 
 def test_default_config_uses_anthropic_when_unset(monkeypatch):

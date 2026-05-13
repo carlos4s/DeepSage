@@ -7,7 +7,7 @@ applies a proofread pass.
 import asyncio
 from pathlib import Path
 
-from mvp_researcher import DeepResearcher
+from deep_researcher import DeepResearcher
 
 OUT_DIR = Path(__file__).parent / "sample_output"
 

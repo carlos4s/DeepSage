@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from mvp_researcher.tracing import span
+from deep_researcher.tracing import span
 
 
 def test_span_records_duration():
