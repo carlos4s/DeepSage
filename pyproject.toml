@@ -7,7 +7,13 @@ name = "deepsage"
 version = "0.2.0"
 description = "Gap-driven deep research agent: multi-section plans, search + crawl, cited markdown/PDF reports."
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "anthropic>=0.40.0",
     "httpx>=0.27.0",

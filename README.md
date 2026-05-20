@@ -84,6 +84,12 @@ Tests cover the network-free pieces: JSON parsing fallbacks, conversation
 state, span tracking, and config resolution. LLM/web pieces are exercised
 via the examples.
 
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for
+local setup, testing expectations, and pull request guidance. Project
+participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Relationship to agents-deep-research
 
 DeepSage was built to be a smaller, more readable cousin of the
