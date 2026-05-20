@@ -31,6 +31,22 @@ def main() -> None:
         help="Override MAX_ITERATIONS.",
     )
     parser.add_argument(
+        "--max-time-minutes", type=float, default=None,
+        help="Stop each research loop after this many minutes (0 disables the limit).",
+    )
+    parser.add_argument(
+        "--results-per-search", type=int, default=None,
+        help="Override RESULTS_PER_SEARCH.",
+    )
+    parser.add_argument(
+        "--fetch-char-limit", type=int, default=None,
+        help="Override FETCH_CHAR_LIMIT.",
+    )
+    parser.add_argument(
+        "--max-concurrency", type=int, default=None,
+        help="Limit concurrent sections, tool calls, and page fetches (0 disables the limit).",
+    )
+    parser.add_argument(
         "--no-proofread", action="store_true",
         help="Skip the proofreader pass in deep mode.",
     )
@@ -43,12 +59,20 @@ def main() -> None:
     if args.mode == "deep":
         researcher = DeepResearcher(
             max_iterations=args.max_iterations,
+            max_time_minutes=args.max_time_minutes,
+            results_per_search=args.results_per_search,
+            fetch_char_limit=args.fetch_char_limit,
+            max_concurrency=args.max_concurrency,
             verbose=not args.quiet,
             proofread=not args.no_proofread,
         )
     else:
         researcher = IterativeResearcher(
             max_iterations=args.max_iterations,
+            max_time_minutes=args.max_time_minutes,
+            results_per_search=args.results_per_search,
+            fetch_char_limit=args.fetch_char_limit,
+            max_concurrency=args.max_concurrency,
             verbose=not args.quiet,
         )
 

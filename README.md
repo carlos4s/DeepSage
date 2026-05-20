@@ -30,6 +30,9 @@ deepsage "Battery chemistries beyond lithium-ion" -o report.md --pdf report.pdf
 
 # Skip the proofreader pass (faster, cheaper)
 deepsage "..." --no-proofread
+
+# Add runtime guards for slower or rate-limited environments
+deepsage "..." --max-time-minutes 8 --max-concurrency 3
 ```
 
 Programmatic:
@@ -72,6 +75,11 @@ planning, Sonnet for writing) without code changes.
 Search backend is **Serper** if `SERPER_API_KEY` is set, otherwise
 **DuckDuckGo**. The crawl tool uses `httpx` + `BeautifulSoup` with a polite
 user-agent.
+
+Runtime budgets can be tuned with `MAX_ITERATIONS`, `RESULTS_PER_SEARCH`,
+`FETCH_CHAR_LIMIT`, `MAX_TIME_MINUTES`, and `MAX_CONCURRENCY`, or with the
+matching CLI flags. Set `MAX_TIME_MINUTES=0` or `MAX_CONCURRENCY=0` to disable
+those optional guards.
 
 ## Tests
 

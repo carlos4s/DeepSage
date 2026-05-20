@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Type, TypeVar
+from typing import List, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -87,9 +87,9 @@ async def _complete_openai(system: str, user: str, model: str, max_tokens: int) 
 def parse_json(text: str, model: Type[T]) -> T:
     """Extract the first JSON object/array in `text` and validate against `model`."""
     candidates = [text]
-    fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
-    if fenced:
-        candidates.insert(0, fenced.group(1))
+    fenced = re.findall(r"```(?:json)?\s*(.+?)```", text, re.DOTALL | re.IGNORECASE)
+    candidates = fenced + candidates
+    candidates.extend(_balanced_json_candidates(text))
     for opener, closer in (("{", "}"), ("[", "]")):
         start = text.find(opener)
         end = text.rfind(closer)
@@ -106,6 +106,52 @@ def parse_json(text: str, model: Type[T]) -> T:
     raise ValueError(f"Could not parse JSON for {model.__name__}: {last_err}\n---\n{text}")
 
 
+def _balanced_json_candidates(text: str) -> List[str]:
+    """Return balanced JSON-looking object/array substrings from left to right.
+
+    LLMs often produce valid JSON followed by explanatory text that contains
+    more braces. A simple first-open/last-close slice can swallow too much, so
+    this scanner stops at the first balanced close while respecting strings.
+    """
+    candidates: List[str] = []
+    pairs = {"{": "}", "[": "]"}
+    closers = set(pairs.values())
+
+    for start, char in enumerate(text):
+        if char not in pairs:
+            continue
+
+        stack = [pairs[char]]
+        in_string = False
+        escaped = False
+
+        for pos in range(start + 1, len(text)):
+            current = text[pos]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == '"':
+                    in_string = False
+                continue
+
+            if current == '"':
+                in_string = True
+            elif current in pairs:
+                stack.append(pairs[current])
+            elif current in closers:
+                if not stack or current != stack[-1]:
+                    break
+                stack.pop()
+                if not stack:
+                    candidates.append(text[start : pos + 1])
+                    break
+
+    return candidates
+
+
 def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
@@ -113,3 +159,8 @@ def env(name: str, default: str) -> str:
 def env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
     return int(raw) if raw else default
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    return float(raw) if raw else default

@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
-from typing import List
+from typing import Awaitable, Iterable, List, TypeVar
 
 from dotenv import load_dotenv
 
@@ -37,6 +38,8 @@ from .tools import crawl_url
 from .tracing import span
 
 load_dotenv(override=False)
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -69,16 +72,30 @@ class IterativeResearcher:
         max_iterations: int | None = None,
         results_per_search: int | None = None,
         fetch_char_limit: int | None = None,
+        max_time_minutes: float | None = None,
+        max_concurrency: int | None = None,
         verbose: bool = True,
         config: LLMConfig | None = None,
     ):
         self.max_iterations = max_iterations or llm.env_int("MAX_ITERATIONS", 4)
         self.results_per_search = results_per_search or llm.env_int("RESULTS_PER_SEARCH", 5)
         self.fetch_char_limit = fetch_char_limit or llm.env_int("FETCH_CHAR_LIMIT", 6000)
+        self.max_time_minutes = (
+            max_time_minutes
+            if max_time_minutes is not None
+            else llm.env_float("MAX_TIME_MINUTES", 0.0)
+        )
+        self.max_concurrency = (
+            max_concurrency
+            if max_concurrency is not None
+            else llm.env_int("MAX_CONCURRENCY", 0)
+        )
         self.verbose = verbose
         self.config = config or default_config()
+        self._started_at: float | None = None
 
     async def run(self, query: str, background_context: str = "") -> ResearchReport:
+        self._started_at = time.monotonic()
         with span("iterative.run", verbose=self.verbose, query=query):
             return await self._run(query, background_context)
 
@@ -99,6 +116,10 @@ class IterativeResearcher:
         iteration = 0
 
         while iteration < self.max_iterations and next_calls:
+            if self._time_budget_exhausted():
+                self._log(f"Reached maximum time ({self.max_time_minutes:g} minutes); stopping.")
+                break
+
             iteration += 1
             self._log(
                 f"\n--- Iteration {iteration}: {len(next_calls)} tool call(s) ---"
@@ -119,6 +140,9 @@ class IterativeResearcher:
 
             if not sources:
                 self._log("No sources retrieved; stopping.")
+                break
+            if self._time_budget_exhausted():
+                self._log(f"Reached maximum time ({self.max_time_minutes:g} minutes); drafting with collected sources.")
                 break
             if iteration >= self.max_iterations:
                 break
@@ -165,7 +189,11 @@ class IterativeResearcher:
                 urls = [r.url for r in results if r.url and r.url not in seen_urls]
                 if not urls:
                     return []
-                pages = await fetch_many(urls, self.fetch_char_limit)
+                pages = await fetch_many(
+                    urls,
+                    self.fetch_char_limit,
+                    max_concurrency=self.max_concurrency,
+                )
                 meta = {r.url: r for r in results}
                 out: List[Source] = []
                 for p in pages:
@@ -189,12 +217,21 @@ class IterativeResearcher:
                 return out
             return []
 
-        batches = await asyncio.gather(*(run(c) for c in calls))
+        batches = await _gather_limited(
+            (run(c) for c in calls),
+            self.max_concurrency,
+        )
         return [s for batch in batches for s in batch]
 
     def _log(self, msg: str) -> None:
         if self.verbose:
             print(msg, flush=True)
+
+    def _time_budget_exhausted(self) -> bool:
+        if not self.max_time_minutes or self.max_time_minutes <= 0 or self._started_at is None:
+            return False
+        elapsed_minutes = (time.monotonic() - self._started_at) / 60
+        return elapsed_minutes >= self.max_time_minutes
 
 
 # --------------------------------------------------------------------------- #
@@ -211,6 +248,8 @@ class DeepResearcher:
         max_iterations: int | None = None,
         results_per_search: int | None = None,
         fetch_char_limit: int | None = None,
+        max_time_minutes: float | None = None,
+        max_concurrency: int | None = None,
         verbose: bool = True,
         config: LLMConfig | None = None,
         proofread: bool = True,
@@ -218,6 +257,12 @@ class DeepResearcher:
         self.max_iterations = max_iterations
         self.results_per_search = results_per_search
         self.fetch_char_limit = fetch_char_limit
+        self.max_time_minutes = max_time_minutes
+        self.max_concurrency = (
+            max_concurrency
+            if max_concurrency is not None
+            else llm.env_int("MAX_CONCURRENCY", 0)
+        )
         self.verbose = verbose
         self.config = config or default_config()
         self.do_proofread = proofread
@@ -234,11 +279,12 @@ class DeepResearcher:
         )
 
         with span("sections", verbose=self.verbose, count=len(plan.report_outline)):
-            section_reports = await asyncio.gather(
-                *(
+            section_reports = await _gather_limited(
+                (
                     self._research_section(s, plan.background_context)
                     for s in plan.report_outline
-                )
+                ),
+                self.max_concurrency,
             )
 
         drafts = [
@@ -274,6 +320,8 @@ class DeepResearcher:
             max_iterations=self.max_iterations,
             results_per_search=self.results_per_search,
             fetch_char_limit=self.fetch_char_limit,
+            max_time_minutes=self.max_time_minutes,
+            max_concurrency=self.max_concurrency,
             verbose=self.verbose,
             config=self.config,
         )
@@ -297,3 +345,22 @@ def _format_sources_full(sources: List[Source]) -> str:
     for s in sources:
         parts.append(f"[{s.n}] {s.title}\nURL: {s.url}\n{s.text}")
     return "\n\n---\n\n".join(parts)
+
+
+async def _gather_limited(
+    coros: Iterable[Awaitable[T]],
+    max_concurrency: int | None,
+) -> List[T]:
+    pending = list(coros)
+    if not pending:
+        return []
+    if not max_concurrency or max_concurrency <= 0:
+        return list(await asyncio.gather(*pending))
+
+    sem = asyncio.Semaphore(max_concurrency)
+
+    async def run_limited(coro: Awaitable[T]) -> T:
+        async with sem:
+            return await coro
+
+    return list(await asyncio.gather(*(run_limited(coro) for coro in pending)))

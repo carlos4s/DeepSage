@@ -78,13 +78,26 @@ def _ddg(query: str, num: int) -> List[SearchResult]:
     ]
 
 
-async def fetch_many(urls: List[str], char_limit: int = 6000) -> List[Page]:
+async def fetch_many(
+    urls: List[str],
+    char_limit: int = 6000,
+    max_concurrency: int = 0,
+) -> List[Page]:
     async with httpx.AsyncClient(
         timeout=15.0,
         follow_redirects=True,
         headers={"User-Agent": _USER_AGENT},
     ) as client:
-        coros = [_fetch_one(client, u, char_limit) for u in urls]
+        if max_concurrency and max_concurrency > 0:
+            sem = asyncio.Semaphore(max_concurrency)
+
+            async def fetch_limited(url: str) -> Page | None:
+                async with sem:
+                    return await _fetch_one(client, url, char_limit)
+
+            coros = [fetch_limited(u) for u in urls]
+        else:
+            coros = [_fetch_one(client, u, char_limit) for u in urls]
         results = await asyncio.gather(*coros, return_exceptions=True)
     return [r for r in results if isinstance(r, Page) and r.text]
 

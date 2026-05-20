@@ -27,6 +27,14 @@ def test_unfenced_with_preamble():
     assert parse_json(raw, Shape).queries == ["x", "y", "z"]
 
 
+def test_first_balanced_json_ignores_trailing_braces():
+    raw = (
+        "Here is the result: {\"queries\": [\"x\", \"{literal}\"]} "
+        "Extra note with braces {not json}."
+    )
+    assert parse_json(raw, Shape).queries == ["x", "{literal}"]
+
+
 def test_invalid_raises():
     with pytest.raises(ValueError):
         parse_json("not json at all", Shape)
